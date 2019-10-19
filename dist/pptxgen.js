@@ -55,18 +55,19 @@ var NODEJS = false;
 var APPJS = false;
 {
 	// NOTE: `NODEJS` determines which network library to use, so using fs-detection is apropos.
-// 	if ( typeof module !== 'undefined' && module.exports && typeof require === 'function' && typeof window === 'undefined' ) {
-// 		try {
+ 	if ( typeof module !== 'undefined' && module.exports && typeof require === 'function' && typeof window === 'undefined' ) {
+ 		try {
 			require.resolve('fs');
 			NODEJS = true;
-// 		}
-// 		catch (ex) {
-// 			NODEJS = false;
-// 		}
-// 	}
-// 	else if ( typeof module !== 'undefined' && module.exports && typeof require === 'function' && typeof window !== 'undefined') {
-// 		APPJS = true;
-// 	}
+ 		}
+ 		catch (ex) {
+			console.log(ex);
+ 			NODEJS = false;
+ 		}
+ 	}
+ 	else if ( typeof module !== 'undefined' && module.exports && typeof require === 'function' && typeof window !== 'undefined') {
+ 		APPJS = true;
+	}
 }
 
 // Require [include] colors/shapes for Node/Angular/React, etc.
@@ -1824,27 +1825,28 @@ var PptxGenJS = function(){
 		// STEP 3: Wait for Promises (if any) then generate the PPTX file
 		Promise.all( arrChartPromises )
 		.then(function(arrResults){
+			let fs = require('fs');
 			var strExportName = ((gObjPptx.fileName.toLowerCase().indexOf('.ppt') > -1) ? gObjPptx.fileName : gObjPptx.fileName+gObjPptx.fileExtn);
-			if ( outputType && JSZIP_OUTPUT_TYPES.indexOf(outputType) >= 0 ) {
-				zip.generateAsync({ type:outputType }).then(gObjPptx.saveCallback);
-			}
-			else if ( NODEJS && !gObjPptx.isBrowser ) {
-				if ( gObjPptx.saveCallback ) {
-					if ( strExportName.indexOf('http') == 0 ) {
-						zip.generateAsync({type:'nodebuffer'}).then(function(content){ gObjPptx.saveCallback(content); });
-					}
-					else {
-						zip.generateAsync({type:'nodebuffer'}).then(function(content){ fs.writeFile(strExportName, content, function(){ gObjPptx.saveCallback(strExportName); } ); });
-					}
-				}
-				else {
+			// if ( outputType && JSZIP_OUTPUT_TYPES.indexOf(outputType) >= 0 ) {
+			// 	zip.generateAsync({ type:outputType }).then(gObjPptx.saveCallback);
+			// }
+			// else if ( NODEJS && !gObjPptx.isBrowser ) {
+				// if ( gObjPptx.saveCallback ) {
+				// 	if ( strExportName.indexOf('http') == 0 ) {
+				// 		zip.generateAsync({type:'nodebuffer'}).then(function(content){ gObjPptx.saveCallback(content); });
+				// 	}
+				// 	else {
+				// 		zip.generateAsync({type:'nodebuffer'}).then(function(content){ fs.writeFile(strExportName, content, function(){ gObjPptx.saveCallback(strExportName); } ); });
+				// 	}
+				// }
+				// else {
 					// Starting in late 2017 (Node ~8.9.1), `fs` requires a callback so use a dummy func
 					zip.generateAsync({type:'nodebuffer'}).then(function(content){ fs.writeFile(strExportName, content, function(){} ); });
-				}
-			}
-			else {
-				zip.generateAsync({type:'blob'}).then(function(content){ writeFileToBrowser(strExportName, content); });
-			}
+				// }
+			// }
+			// else {
+			// 	zip.generateAsync({type:'blob'}).then(function(content){ writeFileToBrowser(strExportName, content); });
+			// }
 		})
 		.catch(function(strErr){
 			console.error(strErr);
@@ -5461,6 +5463,179 @@ var PptxGenJS = function(){
 		jQuery.each(['thead','tbody','tfoot'], function(i,val){
 			if ( jQuery('#'+tabEleId+' > '+val+' > tr').length > 0 ) {
 				jQuery('#'+tabEleId+' > '+val+' > tr:first-child').find('> th, > td').each(function(i,cell){
+					// FIXME: This is a hack - guessing at col widths when colspan
+					if ( jQuery(this).attr('colspan') ) {
+						for (var idx=0; idx<jQuery(this).attr('colspan'); idx++ ) {
+							arrTabColW.push( Math.round(jQuery(this).outerWidth()/jQuery(this).attr('colspan')) );
+						}
+					}
+					else {
+						arrTabColW.push( jQuery(this).outerWidth() );
+					}
+				});
+				return false; // break out of .each loop
+			}
+		});
+		jQuery.each(arrTabColW, function(i,colW){ intTabW += colW; });
+
+		// STEP 2: Calc/Set column widths by using same column width percent from HTML table
+		jQuery.each(arrTabColW, function(i,colW){
+			var intCalcWidth = Number(((emuSlideTabW * (colW / intTabW * 100) ) / 100 / EMU).toFixed(2));
+			var intMinWidth = jQuery('#'+tabEleId+' thead tr:first-child th:nth-child('+ (i+1) +')').data('pptx-min-width');
+			var intSetWidth = jQuery('#'+tabEleId+' thead tr:first-child th:nth-child('+ (i+1) +')').data('pptx-width');
+			arrColW.push( (intSetWidth ? intSetWidth : (intMinWidth > intCalcWidth ? intMinWidth : intCalcWidth)) );
+		});
+
+		// STEP 3: Iterate over each table element and create data arrays (text and opts)
+		// NOTE: We create 3 arrays instead of one so we can loop over body then show header/footer rows on first and last page
+		jQuery.each(['thead','tbody','tfoot'], function(i,val){
+			jQuery('#'+tabEleId+' > '+val+' > tr').each(function(i,row){
+				var arrObjTabCells = [];
+				jQuery(row).find('> th, > td').each(function(i,cell){
+					// A: Get RGB text/bkgd colors
+					var arrRGB1 = [];
+					var arrRGB2 = [];
+					arrRGB1 = jQuery(cell).css('color').replace(/\s+/gi,'').replace('rgba(','').replace('rgb(','').replace(')','').split(',');
+					arrRGB2 = jQuery(cell).css('background-color').replace(/\s+/gi,'').replace('rgba(','').replace('rgb(','').replace(')','').split(',');
+					// ISSUE#57: jQuery default is this rgba value of below giving unstyled tables a black bkgd, so use white instead (FYI: if cell has `background:#000000` jQuery returns 'rgb(0, 0, 0)', so this soln is pretty solid)
+					if ( jQuery(cell).css('background-color') == 'rgba(0, 0, 0, 0)' || jQuery(cell).css('background-color') == 'transparent' ) arrRGB2 = [255,255,255];
+
+					// B: Create option object
+					var objOpts = {
+						fontSize: jQuery(cell).css('font-size').replace(/[a-z]/gi,''),
+						bold:     (( jQuery(cell).css('font-weight') == "bold" || Number(jQuery(cell).css('font-weight')) >= 500 ) ? true : false),
+						color:    rgbToHex( Number(arrRGB1[0]), Number(arrRGB1[1]), Number(arrRGB1[2]) ),
+						fill:     rgbToHex( Number(arrRGB2[0]), Number(arrRGB2[1]), Number(arrRGB2[2]) )
+					};
+					var fontFamily = jQuery(cell).css('font-family').replace(/["]/gi,'').split(", ")[0];
+					if (fontFamily !== "" && fontFamily !== "inherit"  && fontFamily !== "initial") {
+						objOpts.fontFace = fontFamily;
+					}
+
+					if ( ['left','center','right','start','end'].indexOf(jQuery(cell).css('text-align')) > -1 ) objOpts.align = jQuery(cell).css('text-align').replace('start','left').replace('end','right');
+					if ( ['top','middle','bottom'].indexOf(jQuery(cell).css('vertical-align')) > -1 ) objOpts.valign = jQuery(cell).css('vertical-align');
+
+					// C: Add padding [margin] (if any)
+					// NOTE: Margins translate: px->pt 1:1 (e.g.: a 20px padded cell looks the same in PPTX as 20pt Text Inset/Padding)
+					if ( jQuery(cell).css('padding-left') ) {
+						objOpts.margin = [];
+						jQuery.each(['padding-top', 'padding-right', 'padding-bottom', 'padding-left'],function(i,val){
+							objOpts.margin.push( Math.round(jQuery(cell).css(val).replace(/\D/gi,'')) );
+						});
+					}
+
+					// D: Add colspan/rowspan (if any)
+					if ( jQuery(cell).attr('colspan') ) objOpts.colspan = jQuery(cell).attr('colspan');
+					if ( jQuery(cell).attr('rowspan') ) objOpts.rowspan = jQuery(cell).attr('rowspan');
+
+					// E: Add border (if any)
+					if ( jQuery(cell).css('border-top-width') || jQuery(cell).css('border-right-width') || jQuery(cell).css('border-bottom-width') || jQuery(cell).css('border-left-width') ) {
+						objOpts.border = [];
+						jQuery.each(['top','right','bottom','left'], function(i,val){
+							var intBorderW = Math.round( Number(jQuery(cell).css('border-'+val+'-width').replace('px','')) );
+							var arrRGB = [];
+							arrRGB = jQuery(cell).css('border-'+val+'-color').replace(/\s+/gi,'').replace('rgba(','').replace('rgb(','').replace(')','').split(',');
+							var strBorderC = rgbToHex( Number(arrRGB[0]), Number(arrRGB[1]), Number(arrRGB[2]) );
+							objOpts.border.push( {pt:intBorderW, color:strBorderC} );
+						});
+					}
+
+					// F: Massage cell text so we honor linebreak tag as a line break during line parsing
+					var $cell2 = jQuery(cell).clone();
+					$cell2.html( jQuery(cell).html().replace(/<br[^>]*>/gi,'\n') );
+
+					// LAST: Add cell
+					arrObjTabCells.push({
+						text: jQuery.trim( $cell2.text() ),
+						opts: objOpts
+					});
+				});
+				switch (val) {
+					case 'thead': arrObjTabHeadRows.push( arrObjTabCells ); break;
+					case 'tbody': arrObjTabBodyRows.push( arrObjTabCells ); break;
+					case 'tfoot': arrObjTabFootRows.push( arrObjTabCells ); break;
+					default:
+				}
+			});
+		});
+
+		// STEP 4: NOTE: `margin` is "cell margin (pt)" everywhere else tables are used, so explicitly convert to "slide margin" here
+		if ( opts.margin ) {
+			opts.slideMargin = opts.margin;
+			delete(opts.margin);
+		}
+
+		// STEP 5: Break table into Slides as needed
+		// Pass head-rows as there is an option to add to each table and the parse func needs this daa to fulfill that option
+		opts.arrObjTabHeadRows = arrObjTabHeadRows || '';
+		opts.colW = arrColW;
+
+		getSlidesForTableRows(arrObjTabHeadRows.concat(arrObjTabBodyRows).concat(arrObjTabFootRows), opts)
+		.forEach(function(arrTabRows,idx){
+			// A: Create new Slide
+			var newSlide = ( opts.master ? api.addNewSlide(opts.master) : api.addNewSlide() );
+
+			// B: DESIGN: Reset `y` to `newPageStartY` or margin after first Slide (ISSUE#43, ISSUE#47, ISSUE#48)
+			if ( idx == 0 ) opts.y = opts.y || arrInchMargins[0];
+			if ( idx > 0 ) opts.y = opts.newPageStartY || arrInchMargins[0];
+			if (opts.debug) console.log('opts.newPageStartY:'+ opts.newPageStartY +' / arrInchMargins[0]:'+ arrInchMargins[0] +' => opts.y = '+ opts.y );
+
+			// C: Add table to Slide
+			newSlide.addTable(arrTabRows, {x:(opts.x || arrInchMargins[3]), y:opts.y, w:(emuSlideTabW/EMU), colW:arrColW, autoPage:false});
+
+			// D: Add any additional objects
+			if ( opts.addImage ) newSlide.addImage({ path:opts.addImage.url, x:opts.addImage.x, y:opts.addImage.y, w:opts.addImage.w, h:opts.addImage.h });
+			if ( opts.addShape ) newSlide.addShape( opts.addShape.shape, (opts.addShape.opts || opts.addShape.options || {}) );
+			if ( opts.addTable ) newSlide.addTable( opts.addTable.rows,  (opts.addTable.opts || opts.addTable.options || {}) );
+			if ( opts.addText  ) newSlide.addText(  opts.addText.text,   (opts.addText.opts  || opts.addText.options  || {}) );
+		});
+	}
+};
+
+// Basic UUID Generator Adapted from:
+// https://stackoverflow.com/questions/105034/create-guid-uuid-in-javascript#answer-2117523
+function getUuid(uuidFormat) {
+	return uuidFormat.replace(/[xy]/g, function(c) {
+		var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+		return v.toString(16);
+	});
+}
+
+// NodeJS support
+if ( NODEJS ) {
+	var jQuery = null;
+	var fs = null;
+	var JSZip = null;
+	var sizeOf = null;
+
+	// A: jQuery dependency
+	try {
+		var jsdom = require("jsdom");
+		var dom = new jsdom.JSDOM("<!DOCTYPE html>");
+		jQuery = require("jquery")(dom.window);
+	} catch(ex){ console.error("Unable to load `jquery`!\n"+ex); throw 'LIB-MISSING-JQUERY'; }
+
+	// B: Other dependencies
+	try { fs = require("fs"); } catch(ex){ console.error("Unable to load `fs`"); throw 'LIB-MISSING-FS'; }
+	try { https = require("https"); } catch(ex){ console.error("Unable to load `https`"); throw 'LIB-MISSING-HTTPS'; }
+	try { JSZip = require("jszip"); } catch(ex){ console.error("Unable to load `jszip`"); throw 'LIB-MISSING-JSZIP'; }
+	try { sizeOf = require("image-size"); } catch(ex){ console.error("Unable to load `image-size`"); throw 'LIB-MISSING-IMGSIZE'; }
+
+	// LAST: Export module
+	module.exports = PptxGenJS;
+}
+// Angular/React/etc support
+else if ( APPJS ) {
+	// A: jQuery dependency
+	try { jQuery = require("jquery"); } catch(ex){ console.error("Unable to load `jquery`!\n"+ex); throw 'LIB-MISSING-JQUERY'; }
+
+	// B: Other dependencies
+	try { JSZip = require("jszip"); } catch(ex){ console.error("Unable to load `jszip`"); throw 'LIB-MISSING-JSZIP'; }
+
+	// LAST: Export module
+	module.exports = PptxGenJS;
+}
+val+' > tr:first-child').find('> th, > td').each(function(i,cell){
 					// FIXME: This is a hack - guessing at col widths when colspan
 					if ( jQuery(this).attr('colspan') ) {
 						for (var idx=0; idx<jQuery(this).attr('colspan'); idx++ ) {
