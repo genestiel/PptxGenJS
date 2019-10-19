@@ -55,18 +55,18 @@ var NODEJS = false;
 var APPJS = false;
 {
 	// NOTE: `NODEJS` determines which network library to use, so using fs-detection is apropos.
-	if ( typeof module !== 'undefined' && module.exports && typeof require === 'function' && typeof window === 'undefined' ) {
-		try {
+// 	if ( typeof module !== 'undefined' && module.exports && typeof require === 'function' && typeof window === 'undefined' ) {
+// 		try {
 			require.resolve('fs');
 			NODEJS = true;
-		}
-		catch (ex) {
-			NODEJS = false;
-		}
-	}
-	else if ( typeof module !== 'undefined' && module.exports && typeof require === 'function' && typeof window !== 'undefined') {
-		APPJS = true;
-	}
+// 		}
+// 		catch (ex) {
+// 			NODEJS = false;
+// 		}
+// 	}
+// 	else if ( typeof module !== 'undefined' && module.exports && typeof require === 'function' && typeof window !== 'undefined') {
+// 		APPJS = true;
+// 	}
 }
 
 // Require [include] colors/shapes for Node/Angular/React, etc.
